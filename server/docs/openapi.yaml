@@ -1,0 +1,1455 @@
+openapi: 3.0.3
+info:
+  title: TaskFlow API
+  version: 1.0.0
+  description: |
+    **TaskFlow** is a modern, production-grade RESTful API for task tracking, categorization, workflow analytics, and productivity management.
+
+    ### Features
+    - **Authentication**: JWT access tokens (15m expiry) with secure refresh token rotation (7d expiry, HttpOnly cookies & DB TTL).
+    - **Task Management**: Full CRUD, soft-delete trash cycle, restoration, search with regex filtering, priority & due-date filters, and pagination.
+    - **Categories**: Custom color-coded labels with relational integrity (auto-nullifying on deletion).
+    - **Analytics**: High-performance single-pass `$facet` aggregation dashboard metrics.
+    - **Security**: Helmet headers, CORS policies, HPP parameter pollution prevention, and IP-based rate limiting.
+
+  contact:
+    name: TaskFlow Engineering Team
+    email: support@taskflow.example.com
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: http://localhost:5000
+    description: Local Development Server
+  - url: https://api.taskflow.example.com
+    description: Production Server
+
+tags:
+  - name: General
+    description: Service health check, root info, and versioning endpoints
+  - name: Auth
+    description: User registration, authentication, session tokens, and profile retrieval
+  - name: Tasks
+    description: Task CRUD, filtering, pagination, search, trash lifecycle, and restoration
+  - name: Categories
+    description: User-defined task categories with color coding and relational task references
+  - name: Dashboard
+    description: Aggregated real-time productivity statistics and breakdown analytics
+
+paths:
+  /:
+    get:
+      tags:
+        - General
+      summary: API Root Welcome
+      description: Returns a welcome message confirming the API is reachable.
+      operationId: getRoot
+      security: []
+      responses:
+        '200':
+          description: Welcome message returned successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Welcome to TaskFlow API
+
+  /api/health:
+    get:
+      tags:
+        - General
+      summary: Health Check
+      description: Returns health status of the API server.
+      operationId: getHealthStatus
+      security: []
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  status:
+                    type: string
+                    example: OK
+                  message:
+                    type: string
+                    example: TaskFlow API is running
+
+  /api/v1:
+    get:
+      tags:
+        - General
+      summary: API Version
+      description: Returns current API version metadata.
+      operationId: getApiVersion
+      security: []
+      responses:
+        '200':
+          description: Version metadata returned
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  version:
+                    type: string
+                    example: v1
+                  message:
+                    type: string
+                    example: TaskFlow API v1
+
+  /api/v1/auth/register:
+    post:
+      tags:
+        - Auth
+      summary: Register New User
+      description: Creates a new user account, hashes password using bcrypt, and generates an initial JWT session pair.
+      operationId: registerUser
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          description: User registered successfully
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+                example: refreshToken=eyJhbGci...; Path=/; HttpOnly; SameSite=Lax
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthSuccessResponse'
+        '400':
+          $ref: '#/components/responses/400ValidationError'
+        '409':
+          description: Email already registered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                status: fail
+                message: User already exists
+        '429':
+          $ref: '#/components/responses/429TooManyRequests'
+        '500':
+          $ref: '#/components/responses/500InternalServerError'
+
+  /api/v1/auth/login:
+    post:
+      tags:
+        - Auth
+      summary: Login User
+      description: Authenticates user credentials, generates access and refresh tokens, and stores the refresh token hash in DB.
+      operationId: loginUser
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Login successful
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+                example: refreshToken=eyJhbGci...; Path=/; HttpOnly; SameSite=Lax
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthSuccessResponse'
+        '400':
+          $ref: '#/components/responses/400ValidationError'
+        '401':
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                status: fail
+                message: Invalid email or password
+        '429':
+          $ref: '#/components/responses/429TooManyRequests'
+        '500':
+          $ref: '#/components/responses/500InternalServerError'
+
+  /api/v1/auth/me:
+    get:
+      tags:
+        - Auth
+      summary: Get Current User Profile
+      description: Returns the profile data of the currently authenticated user based on the JWT Bearer token.
+      operationId: getCurrentUser
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: User profile retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: User profile fetched successfully
+                  data:
+                    $ref: '#/components/schemas/UserProfile'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '429':
+          $ref: '#/components/responses/429TooManyRequests'
+        '500':
+          $ref: '#/components/responses/500InternalServerError'
+
+  /api/v1/auth/refresh:
+    post:
+      tags:
+        - Auth
+      summary: Refresh Access Token
+      description: Rotates the refresh token (revokes current one in DB and generates a new session pair). Accepts token from HttpOnly cookie or request body.
+      operationId: refreshAuthSession
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshTokenRequest'
+      responses:
+        '200':
+          description: Session refreshed successfully
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+                example: refreshToken=eyJhbGci...; Path=/; HttpOnly; SameSite=Lax
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthSuccessResponse'
+        '400':
+          description: Refresh token missing
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                status: fail
+                message: Refresh token is required in cookie or body
+        '401':
+          description: Token invalid or revoked
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                status: fail
+                message: Invalid or expired refresh token
+        '429':
+          $ref: '#/components/responses/429TooManyRequests'
+        '500':
+          $ref: '#/components/responses/500InternalServerError'
+
+  /api/v1/auth/logout:
+    post:
+      tags:
+        - Auth
+      summary: Logout User
+      description: Revokes the refresh token in MongoDB and clears the authentication cookie.
+      operationId: logoutUser
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshTokenRequest'
+      responses:
+        '200':
+          description: Logged out successfully
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+                example: refreshToken=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Logged out successfully
+        '429':
+          $ref: '#/components/responses/429TooManyRequests'
+        '500':
+          $ref: '#/components/responses/500InternalServerError'
+
+  /api/v1/tasks:
+    get:
+      tags:
+        - Tasks
+      summary: List Tasks (Paginated)
+      description: Fetches a paginated list of non-deleted tasks belonging to the authenticated user, sorted by creation date descending.
+      operationId: getAllTasks
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/pageParam'
+        - $ref: '#/components/parameters/limitParam'
+      responses:
+        '200':
+          description: Tasks fetched successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedTasksResponse'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '429':
+          $ref: '#/components/responses/429TooManyRequests'
+        '500':
+          $ref: '#/components/responses/500InternalServerError'
+
+    post:
+      tags:
+        - Tasks
+      summary: Create New Task
+      description: Creates a task for the authenticated user. Optionally links to a category if specified.
+      operationId: createTask
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTaskRequest'
+      responses:
+        '201':
+          description: Task created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Task created successfully
+                  data:
+                    $ref: '#/components/schemas/Task'
+        '400':
+          $ref: '#/components/responses/400ValidationError'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '404':
+          description: Referenced category not found or belongs to another user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                status: fail
+                message: Category not found
+        '429':
+          $ref: '#/components/responses/429TooManyRequests'
+        '500':
+          $ref: '#/components/responses/500InternalServerError'
+
+  /api/v1/tasks/trash:
+    get:
+      tags:
+        - Tasks
+      summary: List Trash (Deleted Tasks)
+      description: Retrieves a paginated list of soft-deleted tasks belonging to the authenticated user.
+      operationId: getDeletedTasks
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/pageParam'
+        - $ref: '#/components/parameters/limitParam'
+      responses:
+        '200':
+          description: Deleted tasks retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedTasksResponse'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '429':
+          $ref: '#/components/responses/429TooManyRequests'
+        '500':
+          $ref: '#/components/responses/500InternalServerError'
+
+  /api/v1/tasks/search:
+    get:
+      tags:
+        - Tasks
+      summary: Search and Filter Tasks
+      description: Advanced search and filtering across non-deleted tasks with regex search on title and description, status, priority, category, due dates, overdue status, sorting, and pagination.
+      operationId: searchTasks
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: search
+          in: query
+          description: Substring match for task title or description
+          schema:
+            type: string
+            maxLength: 100
+          example: backend
+        - name: status
+          in: query
+          description: Filter by status
+          schema:
+            type: string
+            enum: [todo, in-progress, completed]
+          example: in-progress
+        - name: priority
+          in: query
+          description: Filter by priority
+          schema:
+            type: string
+            enum: [low, medium, high]
+          example: high
+        - name: category
+          in: query
+          description: Filter by Category ObjectId
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{24}$'
+          example: 651fa1e2b8349a128e4e99a1
+        - name: dueBefore
+          in: query
+          description: Filter tasks due on or before date (YYYY-MM-DD)
+          schema:
+            type: string
+            format: date
+          example: '2026-10-31'
+        - name: dueAfter
+          in: query
+          description: Filter tasks due on or after date (YYYY-MM-DD)
+          schema:
+            type: string
+            format: date
+          example: '2026-10-01'
+        - name: overdue
+          in: query
+          description: Filter overdue tasks not yet completed
+          schema:
+            type: string
+            enum: ['true', 'false']
+          example: 'true'
+        - name: sortBy
+          in: query
+          description: Field to sort by
+          schema:
+            type: string
+            enum: [createdAt, dueDate, title, priority]
+            default: createdAt
+          example: dueDate
+        - name: order
+          in: query
+          description: Sort direction
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
+          example: asc
+        - $ref: '#/components/parameters/pageParam'
+        - $ref: '#/components/parameters/limitParam'
+      responses:
+        '200':
+          description: Search results returned successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedTasksResponse'
+        '400':
+          $ref: '#/components/responses/400ValidationError'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '429':
+          $ref: '#/components/responses/429TooManyRequests'
+        '500':
+          $ref: '#/components/responses/500InternalServerError'
+
+  /api/v1/tasks/{taskId}:
+    get:
+      tags:
+        - Tasks
+      summary: Get Task by ID
+      description: Returns a single task by its ObjectId. Only returns the task if owned by authenticated user and not deleted.
+      operationId: getTaskById
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/taskIdParam'
+      responses:
+        '200':
+          description: Task retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Task retrieved successfully
+                  data:
+                    $ref: '#/components/schemas/Task'
+        '400':
+          $ref: '#/components/responses/400ValidationError'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '404':
+          $ref: '#/components/responses/404NotFound'
+        '429':
+          $ref: '#/components/responses/429TooManyRequests'
+        '500':
+          $ref: '#/components/responses/500InternalServerError'
+
+    patch:
+      tags:
+        - Tasks
+      summary: Update Task
+      description: Updates one or more fields of an existing task. Soft-deleted tasks cannot be modified.
+      operationId: updateTask
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/taskIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateTaskRequest'
+      responses:
+        '200':
+          description: Task updated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Task updated successfully
+                  data:
+                    $ref: '#/components/schemas/Task'
+        '400':
+          $ref: '#/components/responses/400ValidationError'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '404':
+          $ref: '#/components/responses/404NotFound'
+        '429':
+          $ref: '#/components/responses/429TooManyRequests'
+        '500':
+          $ref: '#/components/responses/500InternalServerError'
+
+    delete:
+      tags:
+        - Tasks
+      summary: Soft Delete Task (Move to Trash)
+      description: "Sets isDeleted: true and records deletedAt timestamp. The task remains recoverable via the restore endpoint."
+      operationId: deleteTask
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/taskIdParam'
+      responses:
+        '200':
+          description: Task moved to trash
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Task moved to trash successfully
+                  data:
+                    $ref: '#/components/schemas/Task'
+        '400':
+          $ref: '#/components/responses/400ValidationError'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '404':
+          $ref: '#/components/responses/404NotFound'
+        '429':
+          $ref: '#/components/responses/429TooManyRequests'
+        '500':
+          $ref: '#/components/responses/500InternalServerError'
+
+  /api/v1/tasks/{taskId}/restore:
+    patch:
+      tags:
+        - Tasks
+      summary: Restore Soft-Deleted Task
+      description: "Restores a soft-deleted task from the trash by resetting isDeleted: false and deletedAt: null."
+      operationId: restoreTask
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/taskIdParam'
+      responses:
+        '200':
+          description: Task restored successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Task restored successfully
+                  data:
+                    $ref: '#/components/schemas/Task'
+        '400':
+          $ref: '#/components/responses/400ValidationError'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '404':
+          description: Deleted task not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                status: fail
+                message: Deleted task not found
+        '429':
+          $ref: '#/components/responses/429TooManyRequests'
+        '500':
+          $ref: '#/components/responses/500InternalServerError'
+
+  /api/v1/categories:
+    get:
+      tags:
+        - Categories
+      summary: List All Categories
+      description: Returns all categories created by the authenticated user, sorted by creation date descending.
+      operationId: getAllCategories
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Categories fetched successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Categories fetched successfully
+                  count:
+                    type: integer
+                    example: 3
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Category'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '429':
+          $ref: '#/components/responses/429TooManyRequests'
+        '500':
+          $ref: '#/components/responses/500InternalServerError'
+
+    post:
+      tags:
+        - Categories
+      summary: Create Category
+      description: Creates a new user category with a unique name per user and an optional hex color code.
+      operationId: createCategory
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCategoryRequest'
+      responses:
+        '201':
+          description: Category created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Category created successfully
+                  data:
+                    $ref: '#/components/schemas/Category'
+        '400':
+          $ref: '#/components/responses/400ValidationError'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '409':
+          description: Duplicate category name for this user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                status: fail
+                message: name already exists
+        '429':
+          $ref: '#/components/responses/429TooManyRequests'
+        '500':
+          $ref: '#/components/responses/500InternalServerError'
+
+  /api/v1/categories/{categoryId}:
+    get:
+      tags:
+        - Categories
+      summary: Get Category by ID
+      description: Retrieves details of a specific category owned by the authenticated user.
+      operationId: getCategoryById
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/categoryIdParam'
+      responses:
+        '200':
+          description: Category fetched successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Category fetched successfully
+                  data:
+                    $ref: '#/components/schemas/Category'
+        '400':
+          $ref: '#/components/responses/400ValidationError'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '404':
+          $ref: '#/components/responses/404NotFound'
+        '429':
+          $ref: '#/components/responses/429TooManyRequests'
+        '500':
+          $ref: '#/components/responses/500InternalServerError'
+
+    patch:
+      tags:
+        - Categories
+      summary: Update Category
+      description: Updates the name, description, or color of a category.
+      operationId: updateCategory
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/categoryIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateCategoryRequest'
+      responses:
+        '200':
+          description: Category updated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Category updated successfully
+                  data:
+                    $ref: '#/components/schemas/Category'
+        '400':
+          $ref: '#/components/responses/400ValidationError'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '404':
+          $ref: '#/components/responses/404NotFound'
+        '409':
+          description: Category with this name already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                status: fail
+                message: name already exists
+        '429':
+          $ref: '#/components/responses/429TooManyRequests'
+        '500':
+          $ref: '#/components/responses/500InternalServerError'
+
+    delete:
+      tags:
+        - Categories
+      summary: Delete Category
+      description: "Deletes the category from database and automatically sets category: null on all tasks associated with it."
+      operationId: deleteCategory
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/categoryIdParam'
+      responses:
+        '200':
+          description: Category deleted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Category deleted successfully
+                  data:
+                    $ref: '#/components/schemas/Category'
+        '400':
+          $ref: '#/components/responses/400ValidationError'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '404':
+          $ref: '#/components/responses/404NotFound'
+        '429':
+          $ref: '#/components/responses/429TooManyRequests'
+        '500':
+          $ref: '#/components/responses/500InternalServerError'
+
+  /api/v1/dashboard/stats:
+    get:
+      tags:
+        - Dashboard
+      summary: Get Analytics Dashboard Stats
+      description: Returns aggregated task statistics including status counts, priority breakdown, category distribution, and overdue count computed in a single-pass MongoDB $facet aggregation pipeline.
+      operationId: getDashboardStats
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Dashboard statistics computed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Dashboard stats retrieved successfully
+                  data:
+                    $ref: '#/components/schemas/DashboardStats'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '429':
+          $ref: '#/components/responses/429TooManyRequests'
+        '500':
+          $ref: '#/components/responses/500InternalServerError'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Provide your JWT access token (obtained from /auth/login or /auth/register).
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: refreshToken
+      description: HttpOnly cookie containing the rotating refresh token.
+
+  parameters:
+    pageParam:
+      name: page
+      in: query
+      description: Page number for pagination
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+      example: 1
+
+    limitParam:
+      name: limit
+      in: query
+      description: Maximum number of items per page
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 10
+      example: 10
+
+    taskIdParam:
+      name: taskId
+      in: path
+      required: true
+      description: 24-character hexadecimal MongoDB ObjectId of the task
+      schema:
+        type: string
+        pattern: '^[0-9a-fA-F]{24}$'
+      example: 651fa1e2b8349a128e4e99b2
+
+    categoryIdParam:
+      name: categoryId
+      in: path
+      required: true
+      description: 24-character hexadecimal MongoDB ObjectId of the category
+      schema:
+        type: string
+        pattern: '^[0-9a-fA-F]{24}$'
+      example: 651fa1e2b8349a128e4e99a1
+
+  schemas:
+    UserProfile:
+      type: object
+      properties:
+        id:
+          type: string
+          example: 651fa1e2b8349a128e4e9900
+        name:
+          type: string
+          example: Jane Doe
+        email:
+          type: string
+          format: email
+          example: jane.doe@example.com
+        createdAt:
+          type: string
+          format: date-time
+          example: '2026-10-04T12:00:00.000Z'
+        updatedAt:
+          type: string
+          format: date-time
+          example: '2026-10-04T12:30:00.000Z'
+
+    RegisterRequest:
+      type: object
+      required:
+        - name
+        - email
+        - password
+      properties:
+        name:
+          type: string
+          minLength: 2
+          maxLength: 50
+          example: Jane Doe
+        email:
+          type: string
+          format: email
+          example: jane.doe@example.com
+        password:
+          type: string
+          minLength: 8
+          maxLength: 64
+          format: password
+          example: StrongP@ssword123
+
+    LoginRequest:
+      type: object
+      required:
+        - email
+        - password
+      properties:
+        email:
+          type: string
+          format: email
+          example: jane.doe@example.com
+        password:
+          type: string
+          format: password
+          example: StrongP@ssword123
+
+    RefreshTokenRequest:
+      type: object
+      properties:
+        refreshToken:
+          type: string
+          description: Optional when provided via HttpOnly cookie
+          example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+
+    AuthSuccessResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+          example: Operation successful
+        data:
+          type: object
+          properties:
+            user:
+              $ref: '#/components/schemas/UserProfile'
+            accessToken:
+              type: string
+              example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQi...
+            refreshToken:
+              type: string
+              example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQi...
+
+    Category:
+      type: object
+      properties:
+        _id:
+          type: string
+          example: 651fa1e2b8349a128e4e99a1
+        user:
+          type: string
+          example: 651fa1e2b8349a128e4e9900
+        name:
+          type: string
+          example: Work Projects
+        description:
+          type: string
+          example: Tasks related to sprint deliverables
+        color:
+          type: string
+          example: '#3B82F6'
+        createdAt:
+          type: string
+          format: date-time
+          example: '2026-10-04T12:00:00.000Z'
+        updatedAt:
+          type: string
+          format: date-time
+          example: '2026-10-04T12:00:00.000Z'
+
+    CategorySummary:
+      type: object
+      properties:
+        _id:
+          type: string
+          example: 651fa1e2b8349a128e4e99a1
+        name:
+          type: string
+          example: Work Projects
+        color:
+          type: string
+          example: '#3B82F6'
+
+    CreateCategoryRequest:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 50
+          example: Work Projects
+        description:
+          type: string
+          maxLength: 200
+          example: Tasks related to sprint deliverables
+        color:
+          type: string
+          pattern: '^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$'
+          example: '#3B82F6'
+
+    UpdateCategoryRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 50
+          example: Engineering Sprint
+        description:
+          type: string
+          maxLength: 200
+          example: Updated deliverables for current sprint
+        color:
+          type: string
+          pattern: '^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$'
+          example: '#10B981'
+
+    Task:
+      type: object
+      properties:
+        _id:
+          type: string
+          example: 651fa1e2b8349a128e4e99b2
+        user:
+          type: string
+          example: 651fa1e2b8349a128e4e9900
+        title:
+          type: string
+          example: Complete OpenAPI Spec
+        description:
+          type: string
+          example: Author exhaustive Swagger 3.0 documentation for all backend endpoints
+        status:
+          type: string
+          enum: [todo, in-progress, completed]
+          example: in-progress
+        priority:
+          type: string
+          enum: [low, medium, high]
+          example: high
+        dueDate:
+          type: string
+          format: date-time
+          nullable: true
+          example: '2026-10-15T18:00:00.000Z'
+        isDeleted:
+          type: boolean
+          example: false
+        deletedAt:
+          type: string
+          format: date-time
+          nullable: true
+          example: null
+        category:
+          allOf:
+            - $ref: '#/components/schemas/CategorySummary'
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+          example: '2026-10-04T12:00:00.000Z'
+        updatedAt:
+          type: string
+          format: date-time
+          example: '2026-10-04T12:30:00.000Z'
+
+    CreateTaskRequest:
+      type: object
+      required:
+        - title
+        - description
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 100
+          example: Complete OpenAPI Spec
+        description:
+          type: string
+          minLength: 1
+          maxLength: 1000
+          example: Author exhaustive Swagger 3.0 documentation for all backend endpoints
+        status:
+          type: string
+          enum: [todo, in-progress, completed]
+          default: todo
+          example: in-progress
+        priority:
+          type: string
+          enum: [low, medium, high]
+          default: medium
+          example: high
+        dueDate:
+          type: string
+          format: date-time
+          nullable: true
+          example: '2026-10-15T18:00:00.000Z'
+        category:
+          type: string
+          pattern: '^[0-9a-fA-F]{24}$'
+          nullable: true
+          example: 651fa1e2b8349a128e4e99a1
+
+    UpdateTaskRequest:
+      type: object
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 100
+          example: Updated Task Title
+        description:
+          type: string
+          minLength: 1
+          maxLength: 1000
+          example: Updated task description details
+        status:
+          type: string
+          enum: [todo, in-progress, completed]
+          example: completed
+        priority:
+          type: string
+          enum: [low, medium, high]
+          example: high
+        dueDate:
+          type: string
+          format: date-time
+          nullable: true
+          example: '2026-10-20T18:00:00.000Z'
+        category:
+          type: string
+          pattern: '^[0-9a-fA-F]{24}$'
+          nullable: true
+          example: 651fa1e2b8349a128e4e99a1
+
+    PaginationMeta:
+      type: object
+      properties:
+        page:
+          type: integer
+          example: 1
+        limit:
+          type: integer
+          example: 10
+        total:
+          type: integer
+          example: 25
+        totalPages:
+          type: integer
+          example: 3
+
+    PaginatedTasksResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+          example: Tasks fetched successfully
+        data:
+          type: object
+          properties:
+            tasks:
+              type: array
+              items:
+                $ref: '#/components/schemas/Task'
+            pagination:
+              $ref: '#/components/schemas/PaginationMeta'
+
+    DashboardSummary:
+      type: object
+      properties:
+        totalTasks:
+          type: integer
+          example: 24
+        completedTasks:
+          type: integer
+          example: 14
+        pendingTasks:
+          type: integer
+          example: 10
+        overdueTasks:
+          type: integer
+          example: 2
+
+    DashboardMetricItem:
+      type: object
+      properties:
+        _id:
+          type: string
+          example: high
+        count:
+          type: integer
+          example: 7
+
+    DashboardCategoryMetricItem:
+      type: object
+      properties:
+        category:
+          type: string
+          nullable: true
+          example: 651fa1e2b8349a128e4e99a1
+        categoryName:
+          type: string
+          example: Work Projects
+        count:
+          type: integer
+          example: 12
+
+    DashboardStats:
+      type: object
+      properties:
+        summary:
+          $ref: '#/components/schemas/DashboardSummary'
+        tasksByStatus:
+          type: array
+          items:
+            $ref: '#/components/schemas/DashboardMetricItem'
+        tasksByPriority:
+          type: array
+          items:
+            $ref: '#/components/schemas/DashboardMetricItem'
+        tasksByCategory:
+          type: array
+          items:
+            $ref: '#/components/schemas/DashboardCategoryMetricItem'
+
+    ErrorResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        status:
+          type: string
+          example: fail
+        message:
+          type: string
+          example: Operation failed
+
+    ValidationErrorDetail:
+      type: object
+      properties:
+        field:
+          type: string
+          example: body.email
+        message:
+          type: string
+          example: Invalid email format
+
+    ValidationErrorResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        status:
+          type: string
+          example: fail
+        message:
+          type: string
+          example: Invalid email format
+        errors:
+          type: array
+          items:
+            $ref: '#/components/schemas/ValidationErrorDetail'
+
+  responses:
+    '400ValidationError':
+      description: Request validation failed (Zod safeParse error)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ValidationErrorResponse'
+
+    '401Unauthorized':
+      description: Authentication missing, invalid, or expired
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            status: fail
+            message: Authentication token is required
+
+    '404NotFound':
+      description: Requested resource not found or belongs to another user
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            status: fail
+            message: Resource not found
+
+    '429TooManyRequests':
+      description: Rate limit quota exceeded
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            status: fail
+            message: Too many requests, please try again later.
+
+    '500InternalServerError':
+      description: Unhandled internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            status: error
+            message: Internal Server Error

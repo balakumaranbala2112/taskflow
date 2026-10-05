@@ -1,0 +1,13 @@
+$kind: collection
+auth:
+  - id: c893cca8-1cd4-4aea-8966-952670db712e
+    type: jwt
+    name: JWT Bearer
+    credentials:
+      algorithm: HS256
+      isSecretBase64Encoded: false
+      payload: "{}"
+      addTokenTo: header
+      headerPrefix: Bearer
+      queryParamKey: token
+      header: "{}"
