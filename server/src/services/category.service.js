@@ -30,7 +30,7 @@ export const getCategoryByIdAndUser = async (categoryId, userId) => {
     user: userId,
   });
 };
-ss
+
 // Update a category
 export const updateCategoryByIdAndUser = async (
   categoryId,
