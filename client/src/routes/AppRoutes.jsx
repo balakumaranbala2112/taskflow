@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 
 import Home from "../pages/Home";
 import Login from "../pages/auth/Login";
@@ -7,6 +7,7 @@ import Dashboard from "../pages/dashboard/Dashboard";
 import Tasks from "../pages/tasks/Tasks";
 import Categories from "../pages/categories/Categories";
 import Profile from "../pages/profile/Profile";
+import NotFound from "../pages/NotFound";
 import MainLayout from "../components/layout/MainLayout";
 import ProtectedRoute from "./ProtectedRoute";
 
@@ -20,8 +21,8 @@ export const AppRoutes = () => {
         <Route path="/register" element={<Register />} />
 
         {/* Protected routes */}
-        <Route element={<ProtectedRoute />} >
-          <Route element={<MainLayout />} >
+        <Route element={<ProtectedRoute />}>
+          <Route element={<MainLayout />}>
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/tasks" element={<Tasks />} />
             <Route path="/categories" element={<Categories />} />
@@ -29,12 +30,11 @@ export const AppRoutes = () => {
           </Route>
         </Route>
 
-        {/* 404 - catch-all for unknown routes */}
-        {/* <Route path="*" element={<NotFound />} /> */}
-
+        {/* Catch-all 404 Route */}
+        <Route path="*" element={<NotFound />} />
       </Routes>
     </BrowserRouter>
-  )
-}
+  );
+};
 
 export default AppRoutes;

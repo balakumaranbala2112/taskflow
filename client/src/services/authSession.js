@@ -1,18 +1,34 @@
-import { useAuthStore } from "../store/authStore";
 import { refreshAccessToken } from "./authService";
+import { useAuthStore } from "../store/authStore";
+
+let restorePromise = null;
 
 export async function restoreSession() {
-    try {
-        const data = await refreshAccessToken();
-
-        useAuthStore.getState().setAuth(data.user, data.acccessToken);
-
-        return true;
-    } catch () {
-        useAuthStore
-            .getState()
-            .clearAuth();
-
-        return false
+    if (restorePromise) {
+        return restorePromise;
     }
+
+    restorePromise = (async () => {
+
+        try {
+            const data = await refreshAccessToken();
+
+            useAuthStore
+                .getState()
+                .setAuth(data.user, data.accessToken);
+
+
+            return true;
+        } catch (error) {
+
+
+            useAuthStore
+                .getState()
+                .clearAuth();
+
+            return false;
+        }
+    })();
+
+    return restorePromise;
 }
